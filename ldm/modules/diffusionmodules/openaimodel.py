@@ -798,10 +798,32 @@ class UNetModel(nn.Module):
             hs.append(h)
         h = self.middle_block(h, emb, context)
         for module in self.output_blocks:
-            h = th.cat([h, hs.pop()], dim=1)
+            h2 = hs.pop()
+            # print(h.shape, h2.shape)
+            freeu_b = 1.2
+            freeu_s = 0.8
+            freeu_s2 = 1.0 # 0.5
+            h[:,:h.shape[1]//2] *= freeu_b
+            h2 = highpass_torch(h2, freeu_s, 0.1, freeu_s2)
+            h = th.cat([h, h2], dim=1)
             h = module(h, emb, context)
         h = h.type(x.dtype)
         if self.predict_codebook_ids:
             return self.id_predictor(h)
         else:
             return self.out(h)
+
+def highpass_torch(input, suppress, cutoff, rate):
+    x = input.to(th.float32)
+    pass1 = th.fft.fftfreq(input.shape[-1])**2
+    pass2 = th.fft.fftfreq(input.shape[-2])**2
+    kernel = (pass1[None,:] + pass2[:,None]) > cutoff**2
+    kernel = kernel * (1-suppress) + suppress
+    # kernel = 1 + kernel*(rate)
+    kernel = kernel.to(input.device)
+    # print(input.shape, input.dtype, kernel.shape, kernel.dtype)
+    fft_input = th.fft.fft2(x)
+    return th.fft.ifft2(fft_input * kernel, s=input.shape[-2:]).to(input.dtype)
+    x2 = th.fft.ifft2(fft_input * kernel, s=input.shape[-2:])
+    x = x2 * rate + x * (1 - rate)
+    return x.to(input.dtype)
